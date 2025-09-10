@@ -1,99 +1,205 @@
-import os
-from .window_utils import *
-from abstract_utilities import best_match,is_number
-def get_window_best_match(windows_list=None,match_strings=[]):
-    windows_list = windows_list or get_windows_list()
-    b_match = best_match(windows_list,terms=match_strings)
-    if b_match and isinstance(b_match,dict):
-        return parse_window(b_match.get('value'))
-def get_mon_index(monitor_index):
-    mon_index = ''
-    if not is_number(monitor_index):
-        for char in str(monitor_index):
-            if is_number(char):
-                mon_index+=char
-    mon_index = mon_index or monitor_index
-    if is_number(mon_index):
-        mon_index = int(mon_index)
-    return mon_index
-def get_all_parsed_windows(windows=None):
+from __future__ import annotations
+import os, time, json, subprocess
+from typing import List, Dict, Optional, Union, Any
+from abstract_utilities import is_number
+from .window_utils import (  # your module
+    get_windows_list, parse_window, move_window_to_monitor, activate_window,
+    get_all_parsed_windows as _get_all_parsed_windows,  # if you have it there
+)
+
+# ----------------- small helpers -----------------
+
+
+def get_mon_index(monitor_index: Union[int, str, None]) -> Optional[int]:
+    if monitor_index is None:
+        return None
+    if isinstance(monitor_index, int):
+        return monitor_index
+    s = str(monitor_index)
+    digits = ''.join(ch for ch in s if ch.isdigit())
+    return int(digits) if digits else None
+
+def get_all_parsed_windows(windows: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    """Parse wmctrl lines into dicts (does not spin)."""
     windows = windows or get_windows_list()
-    for i,window in enumerate(windows):
-        windows[i] = parse_window(window)
-    return windows
-def get_all_window_ids(windows=None):
-    windows = get_all_parsed_windows(windows=windows)
-    return [win_id.get('window_id') for win_id in windows]
-def filter_win_list(window_ids):
-    win_list_new = get_all_parsed_windows()
-    return [win for win in win_list_new if win.get('window_id') not in window_ids]
-def get_new_window_info(launch_cmd, cwd, match_strings, timeout=10, poll_interval=0.25):
+    parsed: List[Dict[str, Any]] = []
+    for line in windows:
+        w = parse_window(line)
+        if w:
+            parsed.append(w)
+    return parsed
+
+def get_window_ids(parsed_windows: Optional[List[Dict[str, Any]]] = None) -> set[str]:
+    parsed_windows = parsed_windows or get_all_parsed_windows()
+    return {w.get('window_id') for w in parsed_windows if w.get('window_id')}
+
+def find_window_for_script(script_path: str) -> Optional[Dict[str, Any]]:
+    """Disambiguate same-named scripts by comparing absolute script path in program_signature."""
+    script_abs = os.path.abspath(script_path)
+    for w in get_all_parsed_windows():
+        sig = (w.get("program_signature") or {})
+        if sig.get("script") == script_abs:
+            return w
+    return None
+
+def find_window_by_title_fragments(fragments: List[str]) -> Optional[Dict[str, Any]]:
+    frags = [f.lower() for f in fragments]
+    for w in get_all_parsed_windows():
+        title = (w.get('window_title') or '').lower()
+        if any(f in title for f in frags):
+            return w
+    return None
+
+def _place_and_focus(w: Dict[str, Any], monitor_index: Optional[int]) -> Dict[str, Union[str, bool]]:
+    wid = w.get('window_id')
+    moved = True
+    if wid and monitor_index is not None:
+        moved = move_window_to_monitor(wid, monitor_index)
+    activated = bool(wid) and activate_window(wid)
+    return {"launched": False, "window_id": wid or "", "moved": moved, "activated": activated}
+
+# ----------------- core: safe, single-instance -----------------
+
+def get_new_window_info(
+    launch_cmd: List[str],
+    cwd: Optional[str],
+    *,
+    timeout: float = 10.0,
+    poll_interval: float = 0.25,
+    prefer_pid_match: bool = True,
+    title_fallback: Optional[List[str]] = None,
+) -> Optional[Dict[str, Any]]:
+    """
+    Launch once, then wait for a new window. Don't spin; obey timeout.
+    Prefer matching window by spawned PID; optionally fall back to title.
+    """
+    before_ids = get_window_ids()
     proc = subprocess.Popen(launch_cmd, cwd=cwd)
     deadline = time.time() + timeout
 
+    last_seen: Optional[Dict[str, Any]] = None
     while time.time() < deadline:
         time.sleep(poll_interval)
-        for w in get_all_parsed_windows():
-            if str(proc.pid) == w.get("pid"):
+        parsed = get_all_parsed_windows()
+
+        # 1) Prefer exact new ID (set difference)
+        for w in parsed:
+            wid = w.get('window_id')
+            if wid and wid not in before_ids:
+                last_seen = w
+                # if WM gave PID, try PID equality
+                if prefer_pid_match and w.get("pid") == str(proc.pid):
+                    return w
+
+        # 2) Exact PID match (even if ID reused)
+        for w in parsed:
+            if w.get("pid") == str(proc.pid):
                 return w
-    return None
-def find_window_for_script(script_path: str) -> Optional[Dict[str, Any]]:
-    for w in get_all_parsed_windows():
-        sig = w.get("program_signature") or {}
-        if sig.get("script") == os.path.abspath(script_path):
-            return w
-    return None
-def move_window(match_strings=[],mon_index=0,window_info=None):
-    mon_index = get_mon_index(mon_index)
-    w = window_info or get_window_best_match(match_strings)
-    if w:
-        wid = w["window_id"]
-        moved = move_window_to_monitor(wid, mon_index)
-        activated = activate_window(wid)
-        return {"launched": False, "window_id": wid, "moved": moved, "activated": activated}
+
+        # 3) Title fallback (helps WMs that delay PID)
+        if title_fallback:
+            maybe = find_window_by_title_fragments(title_fallback)
+            if maybe:
+                last_seen = maybe
+
+    return last_seen  # may be None
+
 def ensure_single_instance_or_launch(
     *,
-    match_strings: List[str],
-    monitor_index: int = 1,
+    script_path: str,
+    match_strings: Optional[List[str]] = None,
+    monitor_index: Union[int, str, None] = 1,
     launch_cmd: List[str],
     cwd: Optional[str] = None,
-    wait_show_sec: float = 1.0
+    appear_timeout_sec: float = 7.0,
+    poll_interval_sec: float = 0.12,
+    lock_path: Optional[str] = None,
+    debounce_sec: float = 0.75,
 ) -> Dict[str, Union[str, bool]]:
     """
-    If a window matching any of `match_titles` exists: focus and move it to the given monitor.
-    Else: launch the app (once), wait briefly, then focus+move.
-    Returns dict with keys: {'launched': bool, 'window_id': Optional[str]}
+    Safe single-instance:
+      1) If a window for this script is open -> place & focus.
+      2) Else launch once; wait (with timeout) for its window; place & focus.
+
+    Includes:
+      - lock/debounce to avoid double-click storms
+      - no infinite loops
     """
-    # 1) try to find existing
-    existing = find_window_for_script(SCRIPT)
+    # ---- debounce: stop click-storms from spawning multiple processes ----
+    if lock_path is None:
+        lock_path = os.path.expanduser("~/.cache/abstract-ide/launch.lock")
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+
+    now = time.time()
+    try:
+        if os.path.exists(lock_path):
+            with open(lock_path, "r") as f:
+                data = json.load(f)
+            last = float(data.get("ts", 0))
+            if now - last < debounce_sec:
+                # Another launcher just ran; try to bring to front instead of relaunching.
+                existing = find_window_for_script(script_path)
+                if existing:
+                    return _place_and_focus(existing, get_mon_index(monitor_index))
+        # update stamp
+        with open(lock_path, "w") as f:
+            json.dump({"ts": now}, f)
+    except Exception:
+        pass  # don't fail launching because of lock i/o
+
+    # ---- 1) check for existing window by exact source signature ----
+    existing = find_window_for_script(script_path)
     if existing:
-        return move_window(window_info=existing, mon_index=monitor_index)
+        return _place_and_focus(existing, get_mon_index(monitor_index))
 
-
-    new_window_info = get_new_window_info(launch_cmd,cwd,match_strings)
-    if new_window_info:
-        res = move_window(window_info=new_window_info,mon_index=mon_index)
-        return res   
-def launch_python_conda_script(path,mon_index=0):
-    dirname = os.path.dirname(path)
-    basename = os.path.basename(path)
-    mon_index = get_mon_index(mon_index)
-    CONDA_EXE = "/home/computron/miniconda/bin/conda"  # adjust if different
-    ENV_NAME  = "base"
-    SCRIPT    = path
-    WORKDIR   = dirname
-    DISPLAY   = f":{mon_index}"
-    LAUNCH_CMD = [
-        CONDA_EXE, "run", "-n", ENV_NAME, "--no-capture-output",
-        "env", "DISPLAY=" + DISPLAY,   # ensure DISPLAY in env of child
-        "python", SCRIPT
-    ]
-    MATCH_TITLES = [basename]
-    res = ensure_single_instance_or_launch(
-        match_strings=MATCH_TITLES,
-        monitor_index=DISPLAY,
-        launch_cmd=LAUNCH_CMD,
-        cwd=WORKDIR,
-        wait_show_sec=1.0,
+    # ---- 2) launch once, then locate safely (PID / new ID / title fallback) ----
+    win = get_new_window_info(
+        launch_cmd, cwd,
+        timeout=appear_timeout_sec,
+        poll_interval=poll_interval_sec,
+        prefer_pid_match=True,
+        title_fallback=(match_strings or []),
     )
-    return res
+    if not win:
+        return {"launched": True, "window_id": "", "moved": False, "activated": False}
+
+    wid = win.get("window_id") or ""
+    moved = True
+    mon_idx = get_mon_index(monitor_index)
+    if mon_idx is not None:
+        moved = move_window_to_monitor(wid, mon_idx)
+    activated = activate_window(wid)
+    return {"launched": True, "window_id": wid, "moved": moved, "activated": activated}
+
+# ----------------- convenience: launch python with conda -----------------
+
+def launch_python_conda_script(
+    path: str,
+    *,
+    env_name: str = "base",
+    conda_exe: str = "/home/computron/miniconda/bin/conda",
+    display: str = ":0",
+    monitor_index: Union[int, str, None] = 1,
+) -> Dict[str, Union[str, bool]]:
+    """
+    Launch a python script via `conda run` (no shell sourcing), single-instance & safe.
+    """
+    script_abs = os.path.abspath(path)
+    workdir = os.path.dirname(script_abs)
+
+    launch_cmd = [
+        conda_exe, "run", "-n", env_name, "--no-capture-output",
+        "env", f"DISPLAY={display}",
+        "python", script_abs,
+    ]
+
+    match_titles = [os.path.basename(script_abs)]  # light fallback
+    return ensure_single_instance_or_launch(
+        script_path=script_abs,
+        match_strings=match_titles,
+        monitor_index=monitor_index,   # ← integer like 1 (NOT DISPLAY)
+        launch_cmd=launch_cmd,
+        cwd=workdir,
+        appear_timeout_sec=8.0,
+        poll_interval_sec=0.15,
+    )
