@@ -1,10 +1,10 @@
+from __future__ import annotations
 from typing import List, Dict, Optional, Union, Callable
-import threading
-import re
-import subprocess
+import threading,re,subprocess, time, shlex
 from Xlib import X, display
 from Xlib.ext import randr
 from difflib import get_close_matches
+
 XRANDR_CMD     = ["xrandr"]  # or ["xrandr", "--listmonitors"] if you prefer
 WMCTRL_LIST_CMD = ['wmctrl', '-l', '-p']
 WMCTRL_MOVE_CMD = ['wmctrl', '-i', '-r']
@@ -124,9 +124,16 @@ def parse_window(window):
         
         info.update(monitor_info)
         return info
-def filter_window(info,filters={}):
-    if filters and all(parsed_window[k] == v for k, v in filters.items()):
-        return info 
+# --- FIX a bug in your code: 'parsed_window' var wasn't defined in filter_window() ---
+def filter_window(info, filters={}):
+    if not filters:
+        return info
+    # only compare keys that exist
+    for k, v in filters.items():
+        if info.get(k) != v:
+            return None
+    return info
+
 def parse_windows(windows,filters={}):
     parsed_windows = []
     for window in windows:
@@ -176,6 +183,91 @@ def get_window_geometry(window_id: str) -> Optional[Dict[str, int]]:
     except subprocess.SubprocessError as e:
         print(f"Error getting geometry: {e}")
         return None
+    def find_window_by_title_contains(substrings: List[str]) -> Optional[Dict[str, str]]:
+    """Return the first window whose title contains ANY of the substrings (case-insensitive)."""
+    windows = get_windows_list()
+    parsed = parse_windows(windows, filters={})  # returns list
+    if isinstance(parsed, dict):  # guard if single dict ever returned
+        parsed = [parsed]
+    for w in parsed:
+        title = w.get('window_title', '') or ''
+        for s in substrings:
+            if s.lower() in title.lower():
+                return w
+    return None
+
+def get_monitor_geom_by_index(idx: int) -> Optional[Dict[str, int]]:
+    # Reuse your get_monitors()
+    mons = get_monitors()
+    if idx < 0 or idx >= len(mons):
+        return None
+    m = mons[idx]
+    return {"x": m["x"], "y": m["y"], "width": m["width"], "height": m["height"]}
+
+def move_window_to_monitor(window_id: str, monitor_index: int) -> bool:
+    geom = get_monitor_geom_by_index(monitor_index)
+    if not geom:
+        print(f"[abstract_windows] monitor {monitor_index} not found.")
+        return False
+    x, y = geom["x"], geom["y"]
+    try:
+        subprocess.run(['wmctrl', '-i', '-r', window_id, '-e', f'0,{x},{y},-1,-1'],
+                       check=True, text=True)
+        return True
+    except subprocess.SubprocessError as e:
+        print(f"[abstract_windows] wmctrl move error: {e}")
+        return False
+
+def activate_window(window_id: str) -> bool:
+    try:
+        subprocess.run(['wmctrl', '-i', '-a', window_id], check=True, text=True)
+        return True
+    except subprocess.SubprocessError as e:
+        print(f"[abstract_windows] wmctrl activate error: {e}")
+        return False
+
+def ensure_single_instance_or_launch(
+    *,
+    match_titles: List[str],
+    monitor_index: int = 1,
+    launch_cmd: List[str],
+    cwd: Optional[str] = None,
+    wait_show_sec: float = 1.0
+) -> Dict[str, Union[str, bool]]:
+    """
+    If a window matching any of `match_titles` exists: focus and move it to the given monitor.
+    Else: launch the app (once), wait briefly, then focus+move.
+    Returns dict with keys: {'launched': bool, 'window_id': Optional[str]}
+    """
+    # 1) try to find existing
+    w = find_window_by_title_contains(match_titles)
+    if w:
+        wid = w["window_id"]
+        moved = move_window_to_monitor(wid, monitor_index)
+        activated = activate_window(wid)
+        return {"launched": False, "window_id": wid, "moved": moved, "activated": activated}
+
+    # 2) not found -> launch
+    proc = subprocess.Popen(launch_cmd, cwd=cwd)
+    # Give the WM time to create a Window
+    time.sleep(wait_show_sec)
+
+    # 3) try again (retry a few times)
+    wid = None
+    for _ in range(10):
+        w = find_window_by_title_contains(match_titles)
+        if w:
+            wid = w["window_id"]
+            break
+        time.sleep(0.2)
+
+    if wid:
+        moved = move_window_to_monitor(wid, monitor_index)
+        activated = activate_window(wid)
+        return {"launched": True, "window_id": wid, "moved": moved, "activated": activated}
+    else:
+        print("[abstract_windows] Launched but could not locate window by title.")
+        return {"launched": True, "window_id": None, "moved": False, "activated": False}
 def get_parsed_windows():
     windows = get_windows_list()
     filters = get_filters(windows=windows)
