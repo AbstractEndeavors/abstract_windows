@@ -1,5 +1,5 @@
 import os
-from abstract_windows import *
+from .window_utils import *
 from abstract_utilities import best_match,is_number
 def get_window_best_match(windows_list=None,match_strings=[]):
     windows_list = windows_list or get_windows_list()
@@ -60,42 +60,11 @@ def ensure_single_instance_or_launch(
     # 1) try to find existing
     mon_index = get_mon_index(monitor_index)
     window_best_match = get_window_best_match(match_strings=match_strings)
-
     if window_best_match:
         res = move_window(window_info = window_best_match,mon_index=mon_index)
         return res
-    # 2) not found -> launch
-    
-    # Give the WM time to create a Window
+
     new_window_info = get_new_window_info(launch_cmd,cwd,match_strings)
-    res = move_window(window_info=new_window_info,mon_index=mon_index)
-    if res:
-       
+    if new_window_info:
+        res = move_window(window_info=new_window_info,mon_index=mon_index)
         return res   
-
-MATCH_TITLES = ["finditGUI.py"]
-
-
-get_monitors()               
-CONDA_EXE = "/home/computron/miniconda/bin/conda"  # adjust if different
-ENV_NAME  = "base"
-SCRIPT    = "/home/computron/Documents/pythonTools/modules/abstract_ide/finditGUI.py"
-WORKDIR   = os.path.dirname(SCRIPT)
-DISPLAY   = ":0"
-
-
-
-LAUNCH_CMD = [
-    CONDA_EXE, "run", "-n", ENV_NAME, "--no-capture-output",
-    "env", "DISPLAY=" + DISPLAY,   # ensure DISPLAY in env of child
-    "python", SCRIPT
-]
-
-res = ensure_single_instance_or_launch(
-    match_strings=MATCH_TITLES,
-    monitor_index=DISPLAY,
-    launch_cmd=LAUNCH_CMD,
-    cwd=WORKDIR,
-    wait_show_sec=1.0,
-)
-print(res)

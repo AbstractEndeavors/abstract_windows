@@ -226,48 +226,6 @@ def activate_window(window_id: str) -> bool:
         print(f"[abstract_windows] wmctrl activate error: {e}")
         return False
 
-def ensure_single_instance_or_launch(
-    *,
-    match_titles: List[str],
-    monitor_index: int = 1,
-    launch_cmd: List[str],
-    cwd: Optional[str] = None,
-    wait_show_sec: float = 1.0
-) -> Dict[str, Union[str, bool]]:
-    """
-    If a window matching any of `match_titles` exists: focus and move it to the given monitor.
-    Else: launch the app (once), wait briefly, then focus+move.
-    Returns dict with keys: {'launched': bool, 'window_id': Optional[str]}
-    """
-    # 1) try to find existing
-    w = find_window_by_title_contains(match_titles)
-    if w:
-        wid = w["window_id"]
-        moved = move_window_to_monitor(wid, monitor_index)
-        activated = activate_window(wid)
-        return {"launched": False, "window_id": wid, "moved": moved, "activated": activated}
-
-    # 2) not found -> launch
-    proc = subprocess.Popen(launch_cmd, cwd=cwd)
-    # Give the WM time to create a Window
-    time.sleep(wait_show_sec)
-
-    # 3) try again (retry a few times)
-    wid = None
-    for _ in range(10):
-        w = find_window_by_title_contains(match_titles)
-        if w:
-            wid = w["window_id"]
-            break
-        time.sleep(0.2)
-
-    if wid:
-        moved = move_window_to_monitor(wid, monitor_index)
-        activated = activate_window(wid)
-        return {"launched": True, "window_id": wid, "moved": moved, "activated": activated}
-    else:
-        print("[abstract_windows] Launched but could not locate window by title.")
-        return {"launched": True, "window_id": None, "moved": False, "activated": False}
 def get_parsed_windows():
     windows = get_windows_list()
     filters = get_filters(windows=windows)
