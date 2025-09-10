@@ -27,14 +27,22 @@ def get_all_window_ids(windows=None):
 def filter_win_list(window_ids):
     win_list_new = get_all_parsed_windows()
     return [win for win in win_list_new if win.get('window_id') not in window_ids]
-def get_new_window_info(launch_cmd,cwd,match_strings):
-    window_ids = get_all_window_ids()
+def get_new_window_info(launch_cmd, cwd, match_strings, timeout=10, poll_interval=0.25):
     proc = subprocess.Popen(launch_cmd, cwd=cwd)
-    while True:
-        win_list = filter_win_list(window_ids)
-        window_best_match = get_window_best_match(windows_list=win_list,match_strings=match_strings)
-        if window_best_match:
-            return window_best_match
+    deadline = time.time() + timeout
+
+    while time.time() < deadline:
+        time.sleep(poll_interval)
+        for w in get_all_parsed_windows():
+            if str(proc.pid) == w.get("pid"):
+                return w
+    return None
+def find_window_for_script(script_path: str) -> Optional[Dict[str, Any]]:
+    for w in get_all_parsed_windows():
+        sig = w.get("program_signature") or {}
+        if sig.get("script") == os.path.abspath(script_path):
+            return w
+    return None
 def move_window(match_strings=[],mon_index=0,window_info=None):
     mon_index = get_mon_index(mon_index)
     w = window_info or get_window_best_match(match_strings)
@@ -57,11 +65,10 @@ def ensure_single_instance_or_launch(
     Returns dict with keys: {'launched': bool, 'window_id': Optional[str]}
     """
     # 1) try to find existing
-    mon_index = get_mon_index(monitor_index)
-    window_best_match = get_window_best_match(match_strings=match_strings)
-    if window_best_match:
-        res = move_window(window_info = window_best_match,mon_index=mon_index)
-        return res
+    existing = find_window_for_script(SCRIPT)
+    if existing:
+        return move_window(window_info=existing, mon_index=monitor_index)
+
 
     new_window_info = get_new_window_info(launch_cmd,cwd,match_strings)
     if new_window_info:
