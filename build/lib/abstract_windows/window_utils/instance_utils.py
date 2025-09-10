@@ -3,8 +3,8 @@ import os, time, json, subprocess
 from typing import List, Dict, Optional, Union, Any
 from abstract_utilities import is_number
 from .window_utils import (  # your module
-    get_windows_list, parse_window, move_window_to_monitor, activate_window,
-    get_all_parsed_windows as _get_all_parsed_windows,  # if you have it there
+    get_windows_list, parse_window, move_window_to_monitor, activate_window
+      # if you have it there
 )
 
 # ----------------- small helpers -----------------
