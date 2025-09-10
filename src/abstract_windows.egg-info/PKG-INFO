@@ -1,0 +1,71 @@
+Metadata-Version: 2.4
+Name: abstract_windows
+Version: 0.0.1
+Home-page: https://github.com/AbstractEndeavors/abstract_windows
+Author: putkoff
+Author-email: partners@abstractendeavors.com
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: Topic :: Software Development :: Libraries
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.6
+Classifier: Programming Language :: Python :: 3.7
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Requires-Python: >=3.6
+Description-Content-Type: text/markdown
+Requires-Dist: abstract_utilities
+Requires-Dist: abstract_webserver
+Dynamic: author
+Dynamic: author-email
+Dynamic: classifier
+Dynamic: description
+Dynamic: description-content-type
+Dynamic: home-page
+Dynamic: requires-dist
+Dynamic: requires-python
+
+# Unknown Package (vUnknown Version)
+
+No description available
+
+## Installation
+
+```bash
+pip install Unknown Package
+```
+
+## Dependencies
+
+None
+
+## Modules
+
+### src/abstract_react/replace_utils.py
+
+Description of script based on prompt: You are analyzing a Python script 'replace_utils.p (mock response)
+
+### src/abstract_react/__init__.py
+
+Description of script based on prompt: You are analyzing a Python script '__init__.py' lo (mock response)
+
+### src/abstract_react/import_utils.py
+
+Description of script based on prompt: You are analyzing a Python script 'import_utils.py (mock response)
+
+### src/__init__.py
+
+Description of script based on prompt: You are analyzing a Python script '__init__.py' lo (mock response)
+
+### src/abstract_react/utils.py
+
+Description of script based on prompt: You are analyzing a Python script 'utils.py' locat (mock response)
+
+### src/abstract_react/abstract_react.py
+
+Description of script based on prompt: You are analyzing a Python script 'abstract_react. (mock response)
+

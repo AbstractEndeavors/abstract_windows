@@ -1,0 +1,15 @@
+README.md
+pyproject.toml
+setup.py
+src/abstract_windows/__init__.py
+src/abstract_windows.egg-info/PKG-INFO
+src/abstract_windows.egg-info/SOURCES.txt
+src/abstract_windows.egg-info/dependency_links.txt
+src/abstract_windows.egg-info/requires.txt
+src/abstract_windows.egg-info/top_level.txt
+src/abstract_windows/browser_utils/__init__.py
+src/abstract_windows/browser_utils/browser_utils.py
+src/abstract_windows/string_comp/__init__.py
+src/abstract_windows/string_comp/string_compare.py
+src/abstract_windows/window_utils/__init__.py
+src/abstract_windows/window_utils/window_utils.py
