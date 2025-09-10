@@ -183,7 +183,7 @@ def get_window_geometry(window_id: str) -> Optional[Dict[str, int]]:
     except subprocess.SubprocessError as e:
         print(f"Error getting geometry: {e}")
         return None
-    def find_window_by_title_contains(substrings: List[str]) -> Optional[Dict[str, str]]:
+def find_window_by_title_contains(substrings: List[str]) -> Optional[Dict[str, str]]:
     """Return the first window whose title contains ANY of the substrings (case-insensitive)."""
     windows = get_windows_list()
     parsed = parse_windows(windows, filters={})  # returns list
