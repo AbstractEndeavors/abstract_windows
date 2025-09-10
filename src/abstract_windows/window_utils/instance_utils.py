@@ -38,7 +38,6 @@ def get_new_window_info(launch_cmd,cwd,match_strings):
 def move_window(match_strings=[],mon_index=0,window_info=None):
     mon_index = get_mon_index(mon_index)
     w = window_info or get_window_best_match(match_strings)
-    input(w)
     if w:
         wid = w["window_id"]
         moved = move_window_to_monitor(wid, mon_index)
