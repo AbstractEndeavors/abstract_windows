@@ -1,46 +1,18 @@
 from __future__ import annotations
 import os, time, json, subprocess
 from typing import List, Dict, Optional, Union, Any
-from abstract_utilities import is_number
 from .window_utils import (  # your module
-    get_windows_list, parse_window, move_window_to_monitor, activate_window
-      # if you have it there
+    get_windows_list, parse_window, move_window_to_monitor, activate_window,get_all_parsed_windows,
+    find_window_for_script
 )
-
+from .monitor_utils import get_mon_index
 # ----------------- small helpers -----------------
-
-
-def get_mon_index(monitor_index: Union[int, str, None]) -> Optional[int]:
-    if monitor_index is None:
-        return None
-    if isinstance(monitor_index, int):
-        return monitor_index
-    s = str(monitor_index)
-    digits = ''.join(ch for ch in s if ch.isdigit())
-    return int(digits) if digits else None
-
-def get_all_parsed_windows(windows: Optional[List[str]] = None) -> List[Dict[str, Any]]:
-    """Parse wmctrl lines into dicts (does not spin)."""
-    windows = windows or get_windows_list()
-    parsed: List[Dict[str, Any]] = []
-    for line in windows:
-        w = parse_window(line)
-        if w:
-            parsed.append(w)
-    return parsed
 
 def get_window_ids(parsed_windows: Optional[List[Dict[str, Any]]] = None) -> set[str]:
     parsed_windows = parsed_windows or get_all_parsed_windows()
     return {w.get('window_id') for w in parsed_windows if w.get('window_id')}
 
-def find_window_for_script(script_path: str) -> Optional[Dict[str, Any]]:
-    """Disambiguate same-named scripts by comparing absolute script path in program_signature."""
-    script_abs = os.path.abspath(script_path)
-    for w in get_all_parsed_windows():
-        sig = (w.get("program_signature") or {})
-        if sig.get("script") == script_abs:
-            return w
-    return None
+
 
 def find_window_by_title_fragments(fragments: List[str]) -> Optional[Dict[str, Any]]:
     frags = [f.lower() for f in fragments]

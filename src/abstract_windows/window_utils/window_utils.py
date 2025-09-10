@@ -1,37 +1,11 @@
 from __future__ import annotations
-from typing import List, Dict, Optional, Union, Callable
-import threading,re,subprocess, time, shlex
-from Xlib import X, display
-from Xlib.ext import randr
-from difflib import get_close_matches
-import os
+from typing import List, Dict, Optional, Union, Callable, Any, Tuple
+import os, re, time, subprocess
+from .monitor_utils import *
 
-XRANDR_CMD     = ["xrandr"]  # or ["xrandr", "--listmonitors"] if you prefer
-WMCTRL_LIST_CMD = ['wmctrl', '-l', '-p']
-WMCTRL_MOVE_CMD = ['wmctrl', '-i', '-r']
-XDOTOOL_GEOMETRY_CMD = ['xdotool', 'getwindowgeometry']
-
-# Regex patterns
-
-MONITOR_REGEX  = re.compile(
-    r"""^
-    (?P<name>\S+)\s+             # e.g. "DisplayPort-1-2"
-    connected                     # literal word
-    (?:\s+primary)?               # optional " primary"
-    \s+
-    (?P<width>\d+)x(?P<height>\d+)  # resolution, e.g. "2560x1440"
-    \+(?P<x>\d+)\+(?P<y>\d+)        # offsets, e.g. "+0+0"
-    """,
-    re.VERBOSE
-)
-
-POSITION_REGEX = re.compile(r'Position:\s+(\d+),(\d+)')
-GEOMETRY_REGEX = re.compile(r'Geometry:\s+(\d+)x(\d+)')
-
-
-
-
-
+# -------------------------
+# /proc helpers (for signature)
+# -------------------------
 def _readlink_safe(path: str) -> Optional[str]:
     try:
         return os.readlink(path)
@@ -45,307 +19,215 @@ def get_proc_cwd(pid: Union[str, int]) -> Optional[str]:
     return _readlink_safe(f"/proc/{pid}/cwd")
 
 def get_proc_cmdline(pid: Union[str, int]) -> List[str]:
-    """
-    Return argv for pid. /proc/.../cmdline is NUL-separated.
-    """
     try:
         with open(f"/proc/{pid}/cmdline", "rb") as f:
             raw = f.read().split(b"\x00")
-        # Drop trailing empty
-        args = [x.decode("utf-8", "replace") for x in raw if x]
-        return args
+        return [x.decode("utf-8", "replace") for x in raw if x]
     except Exception:
         return []
 
 def guess_python_entry_from_cmdline(args: List[str], cwd: Optional[str]) -> Dict[str, Optional[str]]:
-    """
-    Try to infer the 'source' of a Python program:
-    - script path if argv[1] looks like a file
-    - module if '-m module' is used
-    - '-c code' if inline code
-    Returns fields: {'script_path','module','entry_kind'}
-    """
     script_path = None
     module = None
     entry_kind = None
-
     if not args:
         return {'script_path': None, 'module': None, 'entry_kind': None}
 
-    # Find first non-interpreter token (skip 'python', 'python3', '-OO', '-B', etc.)
+    # find -m / -c or next arg as script
     i = 1
-    while i < len(args) and args[i].startswith('-'):
-        if args[i] == '-m' and i + 1 < len(args):
+    while i < len(args) and args[i].startswith("-"):
+        if args[i] == "-m" and i + 1 < len(args):
             module = args[i+1]
-            entry_kind = 'module'
+            entry_kind = "module"
             break
-        if args[i] == '-c' and i + 1 < len(args):
-            entry_kind = 'inline'
+        if args[i] == "-c" and i + 1 < len(args):
+            entry_kind = "inline"
             break
         i += 1
 
-    # If not module/inline, next arg may be a script path
     if entry_kind is None and i < len(args):
         cand = args[i]
-        # Make absolute relative to cwd if necessary
-        if cwd and not os.path.isabs(cand):
-            cand_abs = os.path.normpath(os.path.join(cwd, cand))
-        else:
-            cand_abs = cand
-        if os.path.splitext(cand_abs)[1] in ('.py', '.pyw', ''):
-            script_path = cand_abs if os.path.exists(cand_abs) else cand_abs
-            entry_kind = 'script'
+        cand_abs = os.path.normpath(os.path.join(cwd, cand)) if cwd and not os.path.isabs(cand) else cand
+        if os.path.splitext(cand_abs)[1] in (".py", ".pyw", ""):
+            script_path = cand_abs
+            entry_kind = "script"
 
-    return {'script_path': script_path, 'module': module, 'entry_kind': entry_kind}
+    return {"script_path": script_path, "module": module, "entry_kind": entry_kind}
 
 def get_program_signature_for_pid(pid: Union[str, int]) -> Dict[str, Optional[str]]:
-    """
-    Build a stable signature for the running program for matching:
-      exe     = real executable path (/proc/pid/exe)
-      cwd     = working directory (/proc/pid/cwd)
-      script  = python script path if any (absolute if we can resolve)
-      module  = python -m module if used
-      kind    = 'script'|'module'|'inline'|None
-    """
     exe = get_proc_exe(pid)
     cwd = get_proc_cwd(pid)
     argv = get_proc_cmdline(pid)
     py = guess_python_entry_from_cmdline(argv, cwd)
     return {
-        'pid': str(pid),
-        'exe': exe,
-        'cwd': cwd,
-        'argv': ' '.join(argv) if argv else None,
-        'script': py.get('script_path'),
-        'module': py.get('module'),
-        'kind': py.get('entry_kind'),
+        "pid": str(pid),
+        "exe": exe,
+        "cwd": cwd,
+        "argv": " ".join(argv) if argv else None,
+        "script": py.get("script_path"),
+        "module": py.get("module"),
+        "kind": py.get("entry_kind"),
     }
-def get_monitors():
-    monitors = []
-    try:
-        result = subprocess.run(
-            XRANDR_CMD, capture_output=True, text=True, check=True
-        )
-        for line in result.stdout.splitlines():
-            m = MONITOR_REGEX.search(line)
-            if not m:
-                continue
-            gd = m.groupdict()
-            monitors.append({
-                "name":   gd["name"],
-                "x":      int(gd["x"]),
-                "y":      int(gd["y"]),
-                "width":  int(gd["width"]),
-                "height": int(gd["height"]),
-            })
-    except subprocess.SubprocessError as e:
-        print(f"Error running xrandr: {e}")
-    return monitors
+
+# -------------------------
+# wmctrl snapshot (fast)
+# -------------------------
+def _wmctrl_snapshot() -> List[Dict[str, str]]:
+    """
+    Single fast call: returns rows with id/desk/pid/host/class/title.
+    We enrich lazily later.
+    """
+    out = subprocess.check_output(WMCTRL_LIST_CMD, text=True, errors="ignore")
+    rows: List[Dict[str, str]] = []
+    for line in out.splitlines():
+        # wmctrl -lx -p columns: ID DESK PID HOST WM_CLASS TITLE
+        parts = line.split(None, 5)
+        if len(parts) < 6:
+            continue
+        wid, desk, pid, host, wmclass, title = parts
+        rows.append({
+            "window_id": wid,
+            "desktop": desk,
+            "pid": pid,
+            "host": host,
+            "wm_class": wmclass,     # e.g. "python3.Idle"
+            "window_title": title,
+        })
+    return rows
+
+# -------------------------
+# monitors cache (fast)
+# -------------------------
 
 
 
-def get_strings_in_string(string,strings):
-    for comp_string in strings:
-        if comp_string.lower() in string.lower():
-            return True
-    return False
-def get_windows_list():
-    result = subprocess.run(
-                WMCTRL_LIST_CMD, capture_output=True, text=True, check=True
-            )
-    windows = result.stdout.splitlines()
-    return windows
-def get_filters(
-    windows: List[str],
-    find_window_id: Optional[str] = None,
-    find_desktop: Optional[str] = None,
-    find_pid: Optional[str] = None,
-    find_host: Optional[str] = None,
-    find_window_title: Optional[str] = None
-):
-    filters = {k: v for k, v in {
-        'window_id': find_window_id,
-        'desktop': find_desktop,
-        'pid': find_pid,
-        'host': find_host,
-        'window_title': find_window_title
-    }.items() if v is not None}
-    return filters
+# -------------------------
+# geometry (lazy)
+# -------------------------
 
 
-def get_monitor_for_window(
-    window_id: Optional[str] = None,
-    x: Optional[int] = None,
-    y: Optional[int] = None
-) -> Dict[str, Union[str, int]]:
-    """Determine which monitor a given window (or coordinate) is on."""
+# -------------------------
+# enrich + parsing helpers
+# -------------------------
+def _enrich_row(row: Dict[str, str], *, with_signature: bool = False, with_geometry: bool = False) -> Dict[str, Any]:
+    """Add optional fields lazily to a wmctrl row."""
+    out: Dict[str, Any] = dict(row)
+    if with_signature and row.get("pid"):
+        out["program_signature"] = get_program_signature_for_pid(row["pid"])
+    if with_geometry and row.get("window_id"):
+        geom = get_window_geometry(row["window_id"])
+        if geom:
+            out["window_geometry"] = geom
+            # map to a monitor if possible
+            mon = get_monitor_for_xy(geom["x"], geom["y"])
+            if mon:
+                out.update(mon)
+    return out
 
-    if window_id and x is None and y is None:
-        geom = get_window_geometry(window_id = window_id)
-        if geom is None:
-            return {}
-        x, y = geom['x'], geom['y']
+def get_all_parsed_windows(*, with_signature: bool = True, with_geometry: bool = False) -> List[Dict[str, Any]]:
+    rows = _wmctrl_snapshot()
+    return [_enrich_row(r, with_signature=with_signature, with_geometry=with_geometry) for r in rows]
 
-    if x is None or y is None:
-        return {}
-    for mon in get_monitors():
-        if mon['x'] <= x < mon['x'] + mon['width'] and \
-           mon['y'] <= y < mon['y'] + mon['height']:
-            return {
-                'monitor_name': mon['name'],
-                'monitor_details': f"{mon['width']}x{mon['height']}+{mon['x']}+{mon['y']}",
-                'win_x': x,
-                'win_y': y
-            }
-    return {}
+# Backwards compatibility: your old functions
+def get_windows_list() -> List[str]:
+    """Kept for compatibility; prefer _wmctrl_snapshot() instead."""
+    # Reconstruct a string like wmctrl -l -p (without class); only used if needed
+    out = subprocess.check_output(["wmctrl", "-l", "-p"], text=True, errors="ignore")
+    return out.splitlines()
+
 def parse_window(window: str) -> Optional[Dict[str, Any]]:
+    """Legacy parser for wmctrl -l -p lines; prefer get_all_parsed_windows()."""
     parts = window.split(None, 4)
-    if len(parts) >= 5:
-        win_id, desktop, pid, host, title = parts
-        monitor_info = get_monitor_for_window(window_id=win_id)
-        window_geometry = get_window_geometry(window_id=win_id)
-        sig = get_program_signature_for_pid(pid)  # <— NEW
-        info = {
-            'window_id': win_id,
-            'desktop': desktop,
-            'pid': pid,
-            'host': host,
-            'window_title': title,
-            'monitor_info': monitor_info,
-            'window_geometry': window_geometry,
-            'program_signature': sig,  # <— NEW
-        }
-        info.update(monitor_info)
-        return info
-    return None
-# --- FIX a bug in your code: 'parsed_window' var wasn't defined in filter_window() ---
-def filter_window(info, filters={}):
-    if not filters:
-        return info
-    # only compare keys that exist
-    for k, v in filters.items():
-        if info.get(k) != v:
-            return None
-    return info
-
-def parse_windows(windows,filters={}):
-    parsed_windows = []
-    for window in windows:
-        parsed_window = parse_window(window)
-        filtered_window = filter_window(parsed_window,filters=filters)
-        if filtered_window:
-            return filtered_window
-        if parsed_window:
-            parsed_windows.append(parsed_window)
-    return parsed_windows
-def get_window_items(
-    windows: List[str],
-    find_window_id: Optional[str] = None,
-    find_desktop: Optional[str] = None,
-    find_pid: Optional[str] = None,
-    find_host: Optional[str] = None,
-    find_window_title: Optional[str] = None
-) -> Union[Dict[str, str], List[Dict[str, str]]]:
-    """Parse `wmctrl -l -p` output, optionally filtering."""
-    filters = get_filters(
-        windows=windows,
-        find_window_id= find_window_id,
-        find_desktop= find_desktop,
-        find_pid= find_pid,
-        find_host= find_host,
-        find_window_title= find_window_title
-        )
-    parsed = parse_windows(windows,filters)
-    return parsed
-def get_window_geometry(window_id: str) -> Optional[Dict[str, int]]:
-    """Get window position (x, y) and size (width, height) using xdotool."""
-    try:
-        result = subprocess.run(
-            XDOTOOL_GEOMETRY_CMD + [window_id],
-            capture_output=True, text=True, check=True
-        )
-        pos_m = POSITION_REGEX.search(result.stdout)
-        size_m = GEOMETRY_REGEX.search(result.stdout)
-        if pos_m and size_m:
-            return {
-                'x': int(pos_m.group(1)),
-                'y': int(pos_m.group(2)),
-                'width': int(size_m.group(1)),
-                'height': int(size_m.group(2))
-            }
+    if len(parts) < 5:
         return None
-    except subprocess.SubprocessError as e:
-        print(f"Error getting geometry: {e}")
-        return None
-def find_window_by_title_contains(substrings: List[str]) -> Optional[Dict[str, str]]:
-    """Return the first window whose title contains ANY of the substrings (case-insensitive)."""
-    windows = get_windows_list()
-    parsed = parse_windows(windows, filters={})  # returns list
-    if isinstance(parsed, dict):  # guard if single dict ever returned
-        parsed = [parsed]
-    for w in parsed:
-        title = w.get('window_title', '') or ''
-        for s in substrings:
-            if s.lower() in title.lower():
-                return w
-    return None
+    win_id, desktop, pid, host, title = parts
+    row = {
+        "window_id": win_id, "desktop": desktop, "pid": pid, "host": host,
+        "wm_class": "", "window_title": title
+    }
+    # lazily enrich with signature; geometry only on demand
+    return _enrich_row(row, with_signature=True, with_geometry=False)
 
-def get_monitor_geom_by_index(idx: int) -> Optional[Dict[str, int]]:
-    # Reuse your get_monitors()
-    mons = get_monitors()
-    if idx < 0 or idx >= len(mons):
-        return None
-    m = mons[idx]
-    return {"x": m["x"], "y": m["y"], "width": m["width"], "height": m["height"]}
 
-def move_window_to_monitor(window_id: str, monitor_index: int) -> bool:
-    geom = get_monitor_geom_by_index(monitor_index)
-    if not geom:
-        print(f"[abstract_windows] monitor {monitor_index} not found.")
-        return False
-    x, y = geom["x"], geom["y"]
-    try:
-        subprocess.run(['wmctrl', '-i', '-r', window_id, '-e', f'0,{x},{y},-1,-1'],
-                       check=True, text=True)
-        return True
-    except subprocess.SubprocessError as e:
-        print(f"[abstract_windows] wmctrl move error: {e}")
-        return False
+# -------------------------
+# actions
+# -------------------------
 
 def activate_window(window_id: str) -> bool:
     try:
         subprocess.run(['wmctrl', '-i', '-a', window_id], check=True, text=True)
         return True
-    except subprocess.SubprocessError as e:
-        print(f"[abstract_windows] wmctrl activate error: {e}")
+    except subprocess.SubprocessError:
         return False
 
-def get_parsed_windows():
-    windows = get_windows_list()
-    filters = get_filters(windows=windows)
-    parsed_windows = parse_windows(windows=windows,filters=filters)
-    return parsed_windows
+# -------------------------
+# matchers (fast paths)
+# -------------------------
+def find_window_by_title_contains(substrings: List[str], rows: Optional[List[Dict[str, str]]] = None) -> Optional[Dict[str, Any]]:
+    rows = rows or _wmctrl_snapshot()
+    subs_l = [s.lower() for s in substrings]
+    for r in rows:
+        title = (r.get("window_title") or "").lower()
+        if any(s in title for s in subs_l):
+            return _enrich_row(r, with_signature=True, with_geometry=False)
+    return None
+
+def find_window_by_class(wm_class: str, rows: Optional[List[Dict[str, str]]] = None) -> Optional[Dict[str, Any]]:
+    rows = rows or _wmctrl_snapshot()
+    for r in rows:
+        if r.get("wm_class") == wm_class:
+            return _enrich_row(r, with_signature=True, with_geometry=False)
+    return None
+
+def find_window_for_script(script_path: str, rows: Optional[List[Dict[str, str]]] = None) -> Optional[Dict[str, Any]]:
+    script_abs = os.path.abspath(script_path)
+    rows = rows or _wmctrl_snapshot()
+    for r in rows:
+        pid = r.get("pid")
+        if not pid:
+            continue
+        sig = get_program_signature_for_pid(pid)
+        if sig.get("script") == script_abs:
+            out = dict(r)
+            out["program_signature"] = sig
+            return out
+    return None
+
 def windows_matching_source(
     *,
     script_abs: Optional[str] = None,
     module: Optional[str] = None,
-    exe_startswith: Optional[str] = None,  # e.g., '/home/computron/miniconda/bin/python'
+    exe_startswith: Optional[str] = None,
     cwd_abs: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
-    matches = []
-    for w in get_all_parsed_windows():
-        sig = w.get('program_signature') or {}
+    rows = _wmctrl_snapshot()
+    matches: List[Dict[str, Any]] = []
+    for r in rows:
+        pid = r.get("pid")
+        if not pid:
+            continue
+        sig = get_program_signature_for_pid(pid)
         ok = True
-        if script_abs is not None and sig.get('script') != script_abs:
+        if script_abs is not None and sig.get("script") != script_abs:
             ok = False
-        if module is not None and sig.get('module') != module:
+        if module is not None and sig.get("module") != module:
             ok = False
-        if cwd_abs is not None and sig.get('cwd') != cwd_abs:
+        if cwd_abs is not None and sig.get("cwd") != cwd_abs:
             ok = False
         if exe_startswith is not None:
-            ex = sig.get('exe') or ''
+            ex = sig.get("exe") or ""
             if not ex.startswith(exe_startswith):
                 ok = False
         if ok:
-            matches.append(w)
+            out = dict(r)
+            out["program_signature"] = sig
+            matches.append(out)
     return matches
+
+# -------------------------
+# convenience (what you used before)
+# -------------------------
+def get_parsed_windows() -> List[Dict[str, Any]]:
+    """Compatibility shim for callers expecting a list of enriched windows."""
+    return get_all_parsed_windows(with_signature=True, with_geometry=False)
+

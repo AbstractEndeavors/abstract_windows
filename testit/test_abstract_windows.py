@@ -1,6 +1,6 @@
 import os
 from abstract_windows import *
-
+input(get_monitors_fast())
 MATCH_TITLES = ["finditGUI.py"]
 
 
