@@ -67,3 +67,26 @@ def ensure_single_instance_or_launch(
     if new_window_info:
         res = move_window(window_info=new_window_info,mon_index=mon_index)
         return res   
+def launch_python_conda_script(path,mon_index=0):
+    dirname = os.path.dirname(path)
+    basename = os.path.basename(path)
+    mon_index = get_mon_index(mon_index)
+    CONDA_EXE = "/home/computron/miniconda/bin/conda"  # adjust if different
+    ENV_NAME  = "base"
+    SCRIPT    = path
+    WORKDIR   = dirname
+    DISPLAY   = f":{mon_index}"
+    LAUNCH_CMD = [
+        CONDA_EXE, "run", "-n", ENV_NAME, "--no-capture-output",
+        "env", "DISPLAY=" + DISPLAY,   # ensure DISPLAY in env of child
+        "python", SCRIPT
+    ]
+    MATCH_TITLES = [basename]
+    res = ensure_single_instance_or_launch(
+        match_strings=MATCH_TITLES,
+        monitor_index=DISPLAY,
+        launch_cmd=LAUNCH_CMD,
+        cwd=WORKDIR,
+        wait_show_sec=1.0,
+    )
+    return res

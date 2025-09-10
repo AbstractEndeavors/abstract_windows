@@ -4,6 +4,7 @@ import threading,re,subprocess, time, shlex
 from Xlib import X, display
 from Xlib.ext import randr
 from difflib import get_close_matches
+import os
 
 XRANDR_CMD     = ["xrandr"]  # or ["xrandr", "--listmonitors"] if you prefer
 WMCTRL_LIST_CMD = ['wmctrl', '-l', '-p']
@@ -31,7 +32,94 @@ GEOMETRY_REGEX = re.compile(r'Geometry:\s+(\d+)x(\d+)')
 
 
 
+def _readlink_safe(path: str) -> Optional[str]:
+    try:
+        return os.readlink(path)
+    except Exception:
+        return None
 
+def get_proc_exe(pid: Union[str, int]) -> Optional[str]:
+    return _readlink_safe(f"/proc/{pid}/exe")
+
+def get_proc_cwd(pid: Union[str, int]) -> Optional[str]:
+    return _readlink_safe(f"/proc/{pid}/cwd")
+
+def get_proc_cmdline(pid: Union[str, int]) -> List[str]:
+    """
+    Return argv for pid. /proc/.../cmdline is NUL-separated.
+    """
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            raw = f.read().split(b"\x00")
+        # Drop trailing empty
+        args = [x.decode("utf-8", "replace") for x in raw if x]
+        return args
+    except Exception:
+        return []
+
+def guess_python_entry_from_cmdline(args: List[str], cwd: Optional[str]) -> Dict[str, Optional[str]]:
+    """
+    Try to infer the 'source' of a Python program:
+    - script path if argv[1] looks like a file
+    - module if '-m module' is used
+    - '-c code' if inline code
+    Returns fields: {'script_path','module','entry_kind'}
+    """
+    script_path = None
+    module = None
+    entry_kind = None
+
+    if not args:
+        return {'script_path': None, 'module': None, 'entry_kind': None}
+
+    # Find first non-interpreter token (skip 'python', 'python3', '-OO', '-B', etc.)
+    i = 1
+    while i < len(args) and args[i].startswith('-'):
+        if args[i] == '-m' and i + 1 < len(args):
+            module = args[i+1]
+            entry_kind = 'module'
+            break
+        if args[i] == '-c' and i + 1 < len(args):
+            entry_kind = 'inline'
+            break
+        i += 1
+
+    # If not module/inline, next arg may be a script path
+    if entry_kind is None and i < len(args):
+        cand = args[i]
+        # Make absolute relative to cwd if necessary
+        if cwd and not os.path.isabs(cand):
+            cand_abs = os.path.normpath(os.path.join(cwd, cand))
+        else:
+            cand_abs = cand
+        if os.path.splitext(cand_abs)[1] in ('.py', '.pyw', ''):
+            script_path = cand_abs if os.path.exists(cand_abs) else cand_abs
+            entry_kind = 'script'
+
+    return {'script_path': script_path, 'module': module, 'entry_kind': entry_kind}
+
+def get_program_signature_for_pid(pid: Union[str, int]) -> Dict[str, Optional[str]]:
+    """
+    Build a stable signature for the running program for matching:
+      exe     = real executable path (/proc/pid/exe)
+      cwd     = working directory (/proc/pid/cwd)
+      script  = python script path if any (absolute if we can resolve)
+      module  = python -m module if used
+      kind    = 'script'|'module'|'inline'|None
+    """
+    exe = get_proc_exe(pid)
+    cwd = get_proc_cwd(pid)
+    argv = get_proc_cmdline(pid)
+    py = guess_python_entry_from_cmdline(argv, cwd)
+    return {
+        'pid': str(pid),
+        'exe': exe,
+        'cwd': cwd,
+        'argv': ' '.join(argv) if argv else None,
+        'script': py.get('script_path'),
+        'module': py.get('module'),
+        'kind': py.get('entry_kind'),
+    }
 def get_monitors():
     monitors = []
     try:
@@ -110,20 +198,26 @@ def get_monitor_for_window(
                 'win_y': y
             }
     return {}
-def parse_window(window):
+def parse_window(window: str) -> Optional[Dict[str, Any]]:
     parts = window.split(None, 4)
     if len(parts) >= 5:
         win_id, desktop, pid, host, title = parts
         monitor_info = get_monitor_for_window(window_id=win_id)
         window_geometry = get_window_geometry(window_id=win_id)
+        sig = get_program_signature_for_pid(pid)  # <— NEW
         info = {
-            'window_id': win_id, 'desktop': desktop, 'pid': pid,
-            'host': host, 'window_title': title,'monitor_info':monitor_info,
-            'window_geometry':window_geometry
+            'window_id': win_id,
+            'desktop': desktop,
+            'pid': pid,
+            'host': host,
+            'window_title': title,
+            'monitor_info': monitor_info,
+            'window_geometry': window_geometry,
+            'program_signature': sig,  # <— NEW
         }
-        
         info.update(monitor_info)
         return info
+    return None
 # --- FIX a bug in your code: 'parsed_window' var wasn't defined in filter_window() ---
 def filter_window(info, filters={}):
     if not filters:
@@ -231,3 +325,27 @@ def get_parsed_windows():
     filters = get_filters(windows=windows)
     parsed_windows = parse_windows(windows=windows,filters=filters)
     return parsed_windows
+def windows_matching_source(
+    *,
+    script_abs: Optional[str] = None,
+    module: Optional[str] = None,
+    exe_startswith: Optional[str] = None,  # e.g., '/home/computron/miniconda/bin/python'
+    cwd_abs: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    matches = []
+    for w in get_all_parsed_windows():
+        sig = w.get('program_signature') or {}
+        ok = True
+        if script_abs is not None and sig.get('script') != script_abs:
+            ok = False
+        if module is not None and sig.get('module') != module:
+            ok = False
+        if cwd_abs is not None and sig.get('cwd') != cwd_abs:
+            ok = False
+        if exe_startswith is not None:
+            ex = sig.get('exe') or ''
+            if not ex.startswith(exe_startswith):
+                ok = False
+        if ok:
+            matches.append(w)
+    return matches
