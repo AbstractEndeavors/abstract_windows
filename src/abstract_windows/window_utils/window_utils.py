@@ -66,7 +66,7 @@ def get_program_signature_for_pid(pid: Union[str, int]) -> Dict[str, Optional[st
     exe = get_proc_exe(pid)
     cwd = get_proc_cwd(pid)
     argv = get_proc_cmdline(pid)
-    py   = guess_python_entry_from_cmdline(argv, cwd)
+    py   = guess_python_entry_from_cmdline(argv, cwd) or {}
     return {
         'pid': str(pid),
         'exe': exe,
@@ -180,6 +180,7 @@ def find_window_by_class(wm_class: str, rows: Optional[List[Dict[str, str]]] = N
 
 def find_window_for_script(script_path: str, rows: Optional[List[Dict[str, str]]] = None) -> Optional[Dict[str, Any]]:
     script_abs = os.path.abspath(script_path)
+    
     rows = rows or _wmctrl_snapshot()
     for r in rows:
         pid = r.get("pid")
