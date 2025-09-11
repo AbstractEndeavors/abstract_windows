@@ -18,6 +18,7 @@ def get_proc_exe(pid: Union[str, int]) -> Optional[str]:
 def get_proc_cwd(pid: Union[str, int]) -> Optional[str]:
     return _readlink_safe(f"/proc/{pid}/cwd")
 
+
 def get_proc_cmdline(pid: Union[str, int]) -> List[str]:
     try:
         with open(f"/proc/{pid}/cmdline", "rb") as f:
@@ -25,6 +26,7 @@ def get_proc_cmdline(pid: Union[str, int]) -> List[str]:
         return [x.decode("utf-8", "replace") for x in raw if x]
     except Exception:
         return []
+
 
 def guess_python_entry_from_cmdline(args: List[str], cwd: Optional[str]) -> Dict[str, Optional[str]]:
     script_path = None
@@ -52,21 +54,28 @@ def guess_python_entry_from_cmdline(args: List[str], cwd: Optional[str]) -> Dict
             script_path = cand_abs
             entry_kind = "script"
 
-    return {"script_path": script_path, "module": module, "entry_kind": entry_kind}
+        return {
+        'script_path': script_path,
+        'module': module,
+        'entry_kind': entry_kind,
+        'args': args,  # <--- add this
+    }
+
 
 def get_program_signature_for_pid(pid: Union[str, int]) -> Dict[str, Optional[str]]:
     exe = get_proc_exe(pid)
     cwd = get_proc_cwd(pid)
     argv = get_proc_cmdline(pid)
-    py = guess_python_entry_from_cmdline(argv, cwd)
+    py   = guess_python_entry_from_cmdline(argv, cwd)
     return {
-        "pid": str(pid),
-        "exe": exe,
-        "cwd": cwd,
-        "argv": " ".join(argv) if argv else None,
-        "script": py.get("script_path"),
-        "module": py.get("module"),
-        "kind": py.get("entry_kind"),
+        'pid': str(pid),
+        'exe': exe,
+        'cwd': cwd,
+        'argv': ' '.join(argv) if argv else None,
+        'args': py.get('args') or [],          # <--- add this
+        'script': py.get('script_path'),
+        'module': py.get('module'),
+        'kind': py.get('entry_kind'),
     }
 
 # -------------------------
@@ -94,16 +103,6 @@ def _wmctrl_snapshot() -> List[Dict[str, str]]:
             "window_title": title,
         })
     return rows
-
-# -------------------------
-# monitors cache (fast)
-# -------------------------
-
-
-
-# -------------------------
-# geometry (lazy)
-# -------------------------
 
 
 # -------------------------
