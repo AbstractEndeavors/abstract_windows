@@ -12,7 +12,7 @@ src/abstract_windows/browser_utils/browser_utils.py
 src/abstract_windows/string_comp/__init__.py
 src/abstract_windows/string_comp/string_compare.py
 src/abstract_windows/window_utils/__init__.py
-src/abstract_windows/window_utils/idle_uitils.py
+src/abstract_windows/window_utils/idle_utils.py
 src/abstract_windows/window_utils/instance_utils.py
 src/abstract_windows/window_utils/monitor_utils.py
 src/abstract_windows/window_utils/mons.py
