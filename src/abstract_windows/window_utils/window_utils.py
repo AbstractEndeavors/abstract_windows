@@ -32,20 +32,26 @@ def guess_python_entry_from_cmdline(args: List[str], cwd: Optional[str]) -> Dict
     script_path = None
     module = None
     entry_kind = None
-    if not args:
-        return {'script_path': None, 'module': None, 'entry_kind': None}
 
-    # find -m / -c or next arg as script
+    if not args:
+        return {"script_path": None, "module": None, "entry_kind": None, "args": []}
+
     i = 1
     while i < len(args) and args[i].startswith("-"):
         if args[i] == "-m" and i + 1 < len(args):
-            module = args[i+1]
+            module = args[i + 1]
             entry_kind = "module"
             break
-        if args[i] == "-c" and i + 1 < len(args):
+        if args[i] == "-c":
             entry_kind = "inline"
             break
         i += 1
+
+    # 🔍 NEW: scan the remainder of args for a .py file
+    for a in args[i + 1:]:
+        if a.endswith(".py"):
+            script_path = os.path.normpath(os.path.join(cwd, a)) if cwd and not os.path.isabs(a) else a
+            break
 
     if entry_kind is None and i < len(args):
         cand = args[i]
@@ -54,11 +60,11 @@ def guess_python_entry_from_cmdline(args: List[str], cwd: Optional[str]) -> Dict
             script_path = cand_abs
             entry_kind = "script"
 
-        return {
-        'script_path': script_path,
-        'module': module,
-        'entry_kind': entry_kind,
-        'args': args,  # <--- add this
+    return {
+        "script_path": script_path,
+        "module": module,
+        "entry_kind": entry_kind,
+        "args": args,
     }
 
 
