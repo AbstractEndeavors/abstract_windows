@@ -18,3 +18,11 @@ src/abstract_windows/window_utils/instance_utils.py
 src/abstract_windows/window_utils/monitor_utils.py
 src/abstract_windows/window_utils/mons.py
 src/abstract_windows/window_utils/window_utils.py
+src/abstract_windows/window_utils___/__init__.py
+src/abstract_windows/window_utils___/idle_uitils.py
+src/abstract_windows/window_utils___/idle_utils.py
+src/abstract_windows/window_utils___/instance_utils.py
+src/abstract_windows/window_utils___/monitor_utils.py
+src/abstract_windows/window_utils___/mons.py
+src/abstract_windows/window_utils___/window_core.py
+src/abstract_windows/window_utils___/window_utils.py

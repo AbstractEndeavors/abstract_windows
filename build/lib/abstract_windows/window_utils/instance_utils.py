@@ -78,7 +78,7 @@ def get_new_window_info(
 
 def ensure_single_instance_or_launch(
     *,
-    script_path: str,
+    path: str,
     match_strings: Optional[List[str]] = None,
     monitor_index: Union[int, str, None] = 1,
     launch_cmd: List[str],
@@ -110,7 +110,7 @@ def ensure_single_instance_or_launch(
             last = float(data.get("ts", 0))
             if now - last < debounce_sec:
                 # Another launcher just ran; try to bring to front instead of relaunching.
-                existing = find_window_for_script(script_path)
+                existing = find_window_for_script(path)
                 if existing:
                     return _place_and_focus(existing, get_mon_index(monitor_index))
         # update stamp
@@ -120,7 +120,7 @@ def ensure_single_instance_or_launch(
         pass  # don't fail launching because of lock i/o
 
     # ---- 1) check for existing window by exact source signature ----
-    existing = find_window_for_script(script_path)
+    existing = find_window_for_script(path)
     if existing:
         return _place_and_focus(existing, get_mon_index(monitor_index))
 
@@ -167,7 +167,7 @@ def launch_python_conda_script(
 
     match_titles = [os.path.basename(script_abs)]  # light fallback
     return ensure_single_instance_or_launch(
-        script_path=script_abs,
+        path=script_abs,
         match_strings=match_titles,
         monitor_index=monitor_index,   # ← integer like 1 (NOT DISPLAY)
         launch_cmd=launch_cmd,
@@ -175,3 +175,51 @@ def launch_python_conda_script(
         appear_timeout_sec=8.0,
         poll_interval_sec=0.15,
     )
+def edit_python_conda_script(
+    path: str,
+    *,
+    env_name: str = "base",
+    conda_exe: str = "/home/computron/miniconda/bin/conda",
+    display: str = ":0",
+    monitor_index: Union[int, str, None] = 1,
+) -> Dict[str, Union[str, bool]]:
+    """
+    Open the given Python file in IDLE (edit mode) using the given Conda env,
+    but if that file is already open in any IDLE editor window,
+    just focus that window instead of reopening it.
+    """
+
+    from .idle_utils import find_idle_window_for_file  # ensures edit-window match
+    script_abs = os.path.abspath(path)
+    workdir = os.path.dirname(script_abs)
+
+    # collect all currently open windows
+    parsed = get_all_parsed_windows(with_signature=True)
+    existing = find_idle_window_for_file(script_abs, parsed)
+
+    if existing:
+        # ✅ bring to front instead of reopening
+        wid = existing.get("window_id")
+        print(f"[abstract_windows] focusing existing IDLE window for {script_abs}")
+        return _place_and_focus(existing, get_mon_index(monitor_index))
+
+    # --- no existing IDLE window found; open it once ---
+    match_titles = [os.path.basename(script_abs), "IDLE"]
+
+    launch_cmd = [
+        conda_exe, "run", "-n", env_name, "--no-capture-output",
+        "env", f"DISPLAY={display}",
+        "python", "-m", "idlelib.idle", "-e", script_abs,
+    ]
+
+    print(f"[abstract_windows] launching IDLE edit for {script_abs}")
+    return ensure_single_instance_or_launch(
+        path=script_abs,
+        match_strings=match_titles,
+        monitor_index=monitor_index,
+        launch_cmd=launch_cmd,
+        cwd=workdir,
+        appear_timeout_sec=10.0,
+        poll_interval_sec=0.25,
+    )
+

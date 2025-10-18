@@ -6,8 +6,8 @@ def _norm(p: str) -> str:
     except Exception:
         return os.path.abspath(p)
 
-def find_idle_window_for_file(file_path: str, rows: list[dict]) -> dict | None:
-    target = _norm(file_path)
+def find_idle_window_for_file(path: str, rows: list[dict]) -> dict | None:
+    target = _norm(path)
     base   = os.path.basename(target)
 
     for w in rows:
