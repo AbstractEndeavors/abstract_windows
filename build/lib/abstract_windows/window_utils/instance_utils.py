@@ -7,7 +7,7 @@ from .window_utils import (  # your module
 )
 from .monitor_utils import get_mon_index
 def get_expanded_path(path):
-    expanded_user = os.path.expanduser(conda_exe)
+    expanded_user = os.path.expanduser(path)
     abspath =os.path.abspath(expanded_user)
     return abspath
 # ----------------- small helpers -----------------
