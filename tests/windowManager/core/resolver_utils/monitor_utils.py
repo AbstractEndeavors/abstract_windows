@@ -151,12 +151,7 @@ def get_monitor_for_window(
                 'win_y': y
             }
     return {}
-def can_move_window(entity) -> bool:
-    return (
-        entity.display_backend == DisplayBackend.X11
-        and entity.visibility == Visibility.EXACT
-        and bool(entity.window_id)
-    )
+
 def get_monitor_geom_by_index(idx: int) -> Optional[Dict[str, int]]:
     # Reuse your get_monitors()
     mons = get_monitors()
