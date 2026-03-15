@@ -6,6 +6,10 @@ from .window_utils import (  # your module
     find_window_for_script
 )
 from .monitor_utils import get_mon_index
+def get_expanded_path(path):
+    expanded_user = os.path.expanduser(conda_exe)
+    abspath =os.path.abspath(expanded_user)
+    return abspath
 # ----------------- small helpers -----------------
 
 def get_window_ids(parsed_windows: Optional[List[Dict[str, Any]]] = None) -> set[str]:
@@ -149,7 +153,7 @@ def launch_python_conda_script(
     path: str,
     *,
     env_name: str = "base",
-    conda_exe: str = "~/miniconda/bin/conda",
+    conda_exe: str = get_expanded_path("~/miniconda/bin/conda"),
     display: str = ":0",
     monitor_index: Union[int, str, None] = 1,
 ) -> Dict[str, Union[str, bool]]:
@@ -179,7 +183,7 @@ def edit_python_conda_script(
     path: str,
     *,
     env_name: str = "base",
-    conda_exe: str = "~/miniconda/bin/conda",
+    conda_exe: str = get_expanded_path("~/miniconda/bin/conda"),
     display: str = ":0",
     monitor_index: Union[int, str, None] = 1,
 ) -> Dict[str, Union[str, bool]]:
